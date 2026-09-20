@@ -1,0 +1,30 @@
+# CleanCity AI - Backend and AI Vision Service Dependencies
+# Python Environment (v3.10+)
+
+# Web Framework & API
+fastapi>=0.110.0
+uvicorn[standard]>=0.28.0
+flask>=3.0.0
+flask-cors>=4.0.0
+
+# Database & Storage
+pymongo>=4.6.1
+motor>=3.3.2
+
+# AI Computer Vision & Deep Learning (Civic ViT & Object Detection)
+torch>=2.2.0
+torchvision>=0.17.0
+pillow>=10.2.0
+opencv-python-headless>=4.9.0.80
+numpy>=1.26.4
+
+# Google GenAI / Gemini Vision API Integration (Optional Live Vision)
+google-generativeai>=0.4.0
+
+# Data Processing & CSV Analytics
+pandas>=2.2.0
+
+# Utilities & Configuration
+python-dotenv>=1.0.1
+pydantic>=2.6.4
+requests>=2.31.0
