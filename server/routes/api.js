@@ -17,6 +17,14 @@ import {
 
 const router = express.Router();
 
+// Health Check Route
+router.get('/health', (req, res) => {
+  res.status(200).json({
+    status: 'ok',
+    message: 'CleanCity AI Backend API route is healthy and running',
+    timestamp: new Date().toISOString()
+  });
+});
 // Auth routes
 router.post('/auth/login', loginUser);
 router.post('/auth/register', registerUser);

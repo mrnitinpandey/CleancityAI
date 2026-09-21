@@ -21,17 +21,32 @@ app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
-// API Health Check
-app.get('/api/health', (req, res) => {
-  const dbStatus = mongoose.connection.readyState === 1 ? 'connected' : 'in-memory-fallback';
-  res.json({
+// Health Check Handler
+const getHealthStatus = (req, res) => {
+  const dbStates = ['disconnected', 'connected', 'connecting', 'disconnecting'];
+  const dbState = dbStates[mongoose.connection.readyState] || 'unknown';
+  const dbStatus = mongoose.connection.readyState === 1 ? 'connected' : (mongoose.connection.readyState === 0 ? 'in-memory-fallback' : dbState);
+
+  res.status(200).json({
     status: 'ok',
     message: 'CleanCity AI Backend is healthy and running',
     timestamp: new Date().toISOString(),
-    database: dbStatus,
+    uptime: `${Math.floor(process.uptime())}s`,
+    database: {
+      status: dbStatus,
+      readyState: mongoose.connection.readyState
+    },
+    system: {
+      nodeVersion: process.version,
+      memoryUsage: `${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)} MB`
+    },
     version: '1.0.0'
   });
-});
+};
+
+// Health Check Endpoints (both /health and /api/health)
+app.get('/health', getHealthStatus);
+app.get('/api/health', getHealthStatus);
 
 // Mount Routes
 app.use('/api', apiRoutes);

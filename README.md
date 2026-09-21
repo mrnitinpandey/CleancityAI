@@ -5,6 +5,14 @@
 
 ---
 
+## 🌐 Live Deployments
+
+- **Frontend App**: [https://cleancity-1.vercel.app](https://cleancity-1.vercel.app/)
+- **Backend API**: [https://cleancity-ai-server.vercel.app](https://cleancity-ai-server.vercel.app/)
+- **API Health Check**: [https://cleancity-ai-server.vercel.app/api/health](https://cleancity-ai-server.vercel.app/api/health)
+
+---
+
 ## 🏗️ Architecture
 
 ```
