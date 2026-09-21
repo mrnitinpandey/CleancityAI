@@ -50,6 +50,7 @@ app.get('/api/health', getHealthStatus);
 
 // Mount Routes
 app.use('/api', apiRoutes);
+app.use('/', apiRoutes);
 
 // Connect DB & Start Server (for local standalone execution)
 if (process.env.NODE_ENV !== 'production' || !process.env.VERCEL) {

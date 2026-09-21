@@ -1,53 +1,72 @@
 const API_BASE_URL = (import.meta.env.VITE_API_URL || '').replace(/\/+$/, '');
 
+async function fetchJSON(url, options = {}) {
+  try {
+    const res = await fetch(url, options);
+    const contentType = res.headers.get('content-type') || '';
+    if (contentType.includes('application/json')) {
+      const data = await res.json();
+      if (!res.ok && !data.message) {
+        data.message = `HTTP error ${res.status}`;
+      }
+      return data;
+    }
+    const text = await res.text();
+    if (!res.ok) {
+      return { success: false, message: `Server returned status ${res.status}: ${text.slice(0, 100)}` };
+    }
+    try {
+      return JSON.parse(text);
+    } catch {
+      return { success: true, text };
+    }
+  } catch (err) {
+    return { success: false, message: err.message || 'Network connection failed' };
+  }
+}
+
 export async function checkHealth() {
-  const res = await fetch(`${API_BASE_URL}/api/health`);
-  return res.json();
+  return await fetchJSON(`${API_BASE_URL}/api/health`);
 }
 
 export async function loginAPI(credentials) {
-  const res = await fetch(`${API_BASE_URL}/api/auth/login`, {
+  return await fetchJSON(`${API_BASE_URL}/api/auth/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(credentials)
   });
-  return res.json();
 }
 
 export async function registerAPI(userData) {
-  const res = await fetch(`${API_BASE_URL}/api/auth/register`, {
+  return await fetchJSON(`${API_BASE_URL}/api/auth/register`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(userData)
   });
-  return res.json();
 }
 
 export async function sendOTPAPI(target, type = 'phone') {
-  const res = await fetch(`${API_BASE_URL}/api/auth/send-otp`, {
+  return await fetchJSON(`${API_BASE_URL}/api/auth/send-otp`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ target, type })
   });
-  return res.json();
 }
 
 export async function verifyOTPAPI(target, otp) {
-  const res = await fetch(`${API_BASE_URL}/api/auth/verify-otp`, {
+  return await fetchJSON(`${API_BASE_URL}/api/auth/verify-otp`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ target, otp })
   });
-  return res.json();
 }
 
 export async function sendTestMailAPI(email) {
-  const res = await fetch(`${API_BASE_URL}/api/auth/test-email`, {
+  return await fetchJSON(`${API_BASE_URL}/api/auth/test-email`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email })
   });
-  return res.json();
 }
 
 export async function fetchComplaints() {
