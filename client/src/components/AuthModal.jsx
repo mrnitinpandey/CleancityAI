@@ -1,9 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   Sparkles, UserCheck, ShieldCheck, Wrench, Lock, Mail, User, Phone, MapPin, 
-  ArrowRight, Hash, Home, CheckCircle2, ChevronRight, KeyRound, ShieldAlert, Check, RefreshCw
+  ArrowRight, Hash, CheckCircle2, KeyRound, Check, RefreshCw, Send, AlertTriangle, X
 } from 'lucide-react';
-import { loginAPI, registerAPI, sendOTPAPI, verifyOTPAPI } from '../services/api';
+import { loginAPI, registerAPI, sendOTPAPI, verifyOTPAPI, sendTestMailAPI } from '../services/api';
 
 const KANPUR_AREAS = [
   'Kakadeo & Geeta Nagar',
@@ -65,22 +65,38 @@ export default function AuthModal({ isOpen, onClose, onAuthSuccess, initialRole 
   const [successMsg, setSuccessMsg] = useState('');
   const [loading, setLoading] = useState(false);
 
-  // Mobile & Email OTP Verification States
-  const [isPhoneVerified, setIsPhoneVerified] = useState(false);
+  // OTP Popup & Verification State
+  const [isOtpPopupOpen, setIsOtpPopupOpen] = useState(false);
+  const [otpDigits, setOtpDigits] = useState(['', '', '', '', '', '']);
+  const [isVerifyingOtp, setIsVerifyingOtp] = useState(false);
+  const [isSendingOtp, setIsSendingOtp] = useState(false);
+  const [otpError, setOtpError] = useState('');
+  const [countdown, setCountdown] = useState(60);
   const [isEmailVerified, setIsEmailVerified] = useState(false);
-  
-  const [showPhoneOTPInput, setShowPhoneOTPInput] = useState(false);
-  const [showEmailOTPInput, setShowEmailOTPInput] = useState(false);
-  
-  const [phoneOTP, setPhoneOTP] = useState('');
-  const [emailOTP, setEmailOTP] = useState('');
-  
-  const [isSendingPhoneOTP, setIsSendingPhoneOTP] = useState(false);
-  const [isSendingEmailOTP, setIsSendingEmailOTP] = useState(false);
-  const [isVerifyingPhoneOTP, setIsVerifyingPhoneOTP] = useState(false);
-  const [isVerifyingEmailOTP, setIsVerifyingEmailOTP] = useState(false);
-  const [demoPhoneOtpCode, setDemoPhoneOtpCode] = useState('');
-  const [demoEmailOtpCode, setDemoEmailOtpCode] = useState('');
+
+  // SMTP Test State
+  const [testMailStatus, setTestMailStatus] = useState('');
+  const [isTestingMail, setIsTestingMail] = useState(false);
+
+  const otpInputRefs = [
+    useRef(null),
+    useRef(null),
+    useRef(null),
+    useRef(null),
+    useRef(null),
+    useRef(null)
+  ];
+
+  // Timer countdown effect for OTP popup
+  useEffect(() => {
+    let timer;
+    if (isOtpPopupOpen && countdown > 0) {
+      timer = setInterval(() => {
+        setCountdown((prev) => prev - 1);
+      }, 1000);
+    }
+    return () => clearInterval(timer);
+  }, [isOtpPopupOpen, countdown]);
 
   if (!isOpen) return null;
 
@@ -89,7 +105,7 @@ export default function AuthModal({ isOpen, onClose, onAuthSuccess, initialRole 
     setError('');
     setSuccessMsg('');
     
-    // Auto-fill demo credentials for convenience if in login mode
+    // Auto-fill demo credentials for convenience in login mode
     if (!isRegister) {
       const match = ROLES.find(r => r.id === selectedRoleId);
       if (match) {
@@ -99,133 +115,171 @@ export default function AuthModal({ isOpen, onClose, onAuthSuccess, initialRole 
     }
   };
 
-  // Trigger Phone OTP
-  const handleSendPhoneOTP = async () => {
-    if (!phone || phone.length < 10) {
-      setError('Please enter a valid 10-digit mobile number first.');
-      return;
-    }
-    setError('');
-    setIsSendingPhoneOTP(true);
-    try {
-      const res = await sendOTPAPI(phone, 'phone');
-      if (res.success) {
-        setShowPhoneOTPInput(true);
-        setDemoPhoneOtpCode(res.otp || '123456');
-        setSuccessMsg(`OTP sent to mobile ${phone}! (Code: ${res.otp || '123456'})`);
-      } else {
-        setError(res.message || 'Failed to send mobile OTP');
-      }
-    } catch (err) {
-      setError('Failed to send mobile OTP. Please try again.');
-    } finally {
-      setIsSendingPhoneOTP(false);
-    }
-  };
-
-  // Verify Phone OTP
-  const handleVerifyPhoneOTP = async () => {
-    if (!phoneOTP) return;
-    setIsVerifyingPhoneOTP(true);
-    setError('');
-    try {
-      const res = await verifyOTPAPI(phone, phoneOTP);
-      if (res.success) {
-        setIsPhoneVerified(true);
-        setShowPhoneOTPInput(false);
-        setSuccessMsg('✓ Mobile number verified successfully!');
-      } else {
-        setError(res.message || 'Incorrect Mobile OTP.');
-      }
-    } catch (err) {
-      setError('OTP verification failed.');
-    } finally {
-      setIsVerifyingPhoneOTP(false);
-    }
-  };
-
-  // Trigger Email OTP
-  const handleSendEmailOTP = async () => {
+  // Dispatch OTP to Email
+  const requestEmailOTP = async () => {
     if (!email || !email.includes('@')) {
-      setError('Please enter a valid email address first.');
+      setError('Please enter a valid email address to receive your OTP.');
+      return false;
+    }
+    setError('');
+    setOtpError('');
+    setIsSendingOtp(true);
+    try {
+      const res = await sendOTPAPI(email.trim(), 'email');
+      if (res.success) {
+        setSuccessMsg(`✓ Verification OTP sent to ${email}`);
+        setCountdown(60);
+        setOtpDigits(['', '', '', '', '', '']);
+        setIsOtpPopupOpen(true);
+        setTimeout(() => otpInputRefs[0]?.current?.focus(), 150);
+        return true;
+      } else {
+        setError(res.message || 'Failed to send OTP to email.');
+        return false;
+      }
+    } catch (err) {
+      setError('Failed to connect to email verification service.');
+      return false;
+    } finally {
+      setIsSendingOtp(false);
+    }
+  };
+
+  // Handle individual digit input in OTP popup
+  const handleDigitChange = (index, value) => {
+    // Only accept numeric inputs
+    const char = value.replace(/\D/g, '').slice(-1);
+    const newDigits = [...otpDigits];
+    newDigits[index] = char;
+    setOtpDigits(newDigits);
+    setOtpError('');
+
+    // If character entered, auto-focus next field
+    if (char && index < 5) {
+      otpInputRefs[index + 1]?.current?.focus();
+    }
+  };
+
+  // Handle backspace and paste in OTP inputs
+  const handleKeyDown = (index, e) => {
+    if (e.key === 'Backspace') {
+      if (!otpDigits[index] && index > 0) {
+        otpInputRefs[index - 1]?.current?.focus();
+      }
+    }
+  };
+
+  const handlePaste = (e) => {
+    e.preventDefault();
+    const pastedData = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, 6);
+    if (!pastedData) return;
+
+    const newDigits = [...otpDigits];
+    for (let i = 0; i < 6; i++) {
+      newDigits[i] = pastedData[i] || '';
+    }
+    setOtpDigits(newDigits);
+    const focusIndex = Math.min(pastedData.length, 5);
+    otpInputRefs[focusIndex]?.current?.focus();
+  };
+
+  // Verify OTP and complete Registration
+  const handleVerifyOtpAndRegister = async () => {
+    const fullOtp = otpDigits.join('');
+    if (fullOtp.length < 6) {
+      setOtpError('Please enter all 6 digits of the verification code.');
       return;
     }
-    setError('');
-    setIsSendingEmailOTP(true);
-    try {
-      const res = await sendOTPAPI(email, 'email');
-      if (res.success) {
-        setShowEmailOTPInput(true);
-        setDemoEmailOtpCode(res.otp || '123456');
-        setSuccessMsg(`OTP sent to email ${email}! (Code: ${res.otp || '123456'})`);
-      } else {
-        setError(res.message || 'Failed to send email OTP');
-      }
-    } catch (err) {
-      setError('Failed to send email OTP. Please try again.');
-    } finally {
-      setIsSendingEmailOTP(false);
-    }
-  };
 
-  // Verify Email OTP
-  const handleVerifyEmailOTP = async () => {
-    if (!emailOTP) return;
-    setIsVerifyingEmailOTP(true);
-    setError('');
+    setIsVerifyingOtp(true);
+    setOtpError('');
+
     try {
-      const res = await verifyOTPAPI(email, emailOTP);
-      if (res.success) {
+      const verifyRes = await verifyOTPAPI(email.trim(), fullOtp);
+      if (verifyRes.success) {
         setIsEmailVerified(true);
-        setShowEmailOTPInput(false);
-        setSuccessMsg('✓ Email address verified successfully!');
-      } else {
-        setError(res.message || 'Incorrect Email OTP.');
-      }
-    } catch (err) {
-      setError('Email OTP verification failed.');
-    } finally {
-      setIsVerifyingEmailOTP(false);
-    }
-  };
+        setIsOtpPopupOpen(false);
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    setError('');
-    setLoading(true);
-
-    try {
-      const fullAddress = `${streetAddress || 'Premises'}, ${kanpurArea}, Kanpur, UP`;
-      if (isRegister) {
-        const res = await registerAPI({ 
-          name, 
-          email, 
-          password, 
-          role, 
-          phone, 
+        // Proceed to finalize registration immediately
+        setLoading(true);
+        const fullAddress = `${streetAddress || 'Premises'}, ${kanpurArea}, Kanpur, UP`;
+        const regRes = await registerAPI({
+          name,
+          email: email.trim(),
+          password,
+          role,
+          phone: phone || '+91 98765-43210',
           customUserId: customUserId.trim() || undefined,
           address: fullAddress,
           zone: kanpurArea
         });
-        if (res.success) {
-          onAuthSuccess(res.user);
+
+        if (regRes.success) {
+          onAuthSuccess(regRes.user);
           onClose();
         } else {
-          setError(res.message || 'Registration failed');
+          setError(regRes.message || 'Registration failed after OTP verification');
         }
       } else {
-        const res = await loginAPI({ email, password, role });
-        if (res.success) {
-          onAuthSuccess(res.user);
-          onClose();
-        } else {
-          setError(res.message || 'Login failed');
-        }
+        setOtpError(verifyRes.message || 'Invalid or expired OTP code.');
+      }
+    } catch (err) {
+      setOtpError('Verification request failed. Please retry.');
+    } finally {
+      setIsVerifyingOtp(false);
+      setLoading(false);
+    }
+  };
+
+  // Main Form Submit Handler
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setError('');
+
+    if (isRegister) {
+      if (!email || !password || !name) {
+        setError('Please fill in your name, email, and password.');
+        return;
+      }
+      if (!isEmailVerified) {
+        // Trigger OTP verification popup
+        await requestEmailOTP();
+        return;
+      }
+    }
+
+    // Login Flow
+    setLoading(true);
+    try {
+      const res = await loginAPI({ email: email.trim(), password, role });
+      if (res.success) {
+        onAuthSuccess(res.user);
+        onClose();
+      } else {
+        setError(res.message || 'Login failed');
       }
     } catch (err) {
       setError('Connection to auth server failed');
     } finally {
       setLoading(false);
+    }
+  };
+
+  // Direct test email trigger
+  const handleTriggerTestEmail = async () => {
+    setIsTestingMail(true);
+    setTestMailStatus('');
+    try {
+      const res = await sendTestMailAPI('nitinkumar.passionne@gmail.com');
+      if (res.success) {
+        setTestMailStatus('✓ Test email dispatched to nitinkumar.passionne@gmail.com!');
+      } else {
+        setTestMailStatus('❌ Test failed: ' + res.message);
+      }
+    } catch (err) {
+      setTestMailStatus('❌ Server error sending test email');
+    } finally {
+      setIsTestingMail(false);
     }
   };
 
@@ -236,7 +290,7 @@ export default function AuthModal({ isOpen, onClose, onAuthSuccess, initialRole 
         {/* Close Button */}
         <button
           onClick={onClose}
-          className="absolute top-4 right-4 text-slate-400 hover:text-white text-xl"
+          className="absolute top-4 right-4 text-slate-400 hover:text-white text-xl cursor-pointer"
         >
           ×
         </button>
@@ -247,14 +301,14 @@ export default function AuthModal({ isOpen, onClose, onAuthSuccess, initialRole 
             <Sparkles size={20} className="text-white" />
           </div>
           <h2 className="text-2xl font-black text-white">
-            {isRegister ? 'Register New Account' : 'CleanCity AI Portal Login'}
+            {isRegister ? 'Register CleanCity Account' : 'CleanCity AI Portal Login'}
           </h2>
           <p className="text-xs text-slate-300 mt-0.5">
-            {isRegister ? 'Select your role and create your credentials' : 'Choose your role to access features'}
+            {isRegister ? 'Enter details & verify email with one-time OTP' : 'Choose your role to access features'}
           </p>
         </div>
 
-        {/* EXPLICIT LIST OF ROLE OPTIONS (CITIZEN, ADMIN, WORKER) */}
+        {/* ROLE SELECTION */}
         <div className="mb-5">
           <label className="text-xs font-bold text-slate-300 block mb-2 uppercase tracking-wide">
             1. Select Your Account Role:
@@ -308,8 +362,7 @@ export default function AuthModal({ isOpen, onClose, onAuthSuccess, initialRole 
           </div>
         )}
 
-        {/* Success / Info Notification Banner */}
-        {successMsg && (
+        {successMsg && !isOtpPopupOpen && (
           <div className="p-3 mb-4 rounded-xl bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-xs text-center font-semibold flex items-center justify-center gap-2">
             <CheckCircle2 size={16} className="text-emerald-400 flex-shrink-0" />
             <span>{successMsg}</span>
@@ -326,7 +379,7 @@ export default function AuthModal({ isOpen, onClose, onAuthSuccess, initialRole 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <div>
                 <label className="text-xs text-slate-300 block mb-1 font-semibold flex items-center gap-1">
-                  <User size={13} /> Full Name
+                  <User size={13} /> Full Name <span className="text-rose-400">*</span>
                 </label>
                 <input
                   type="text"
@@ -353,7 +406,7 @@ export default function AuthModal({ isOpen, onClose, onAuthSuccess, initialRole 
             </div>
           )}
 
-          {/* EMAIL INPUT WITH OTP VERIFICATION SYSTEM */}
+          {/* EMAIL INPUT WITH OTP BADGE */}
           <div className="border border-white/10 p-3 rounded-xl bg-white/5 flex flex-col gap-2">
             <div className="flex items-center justify-between">
               <label className="text-xs text-slate-300 font-semibold flex items-center gap-1">
@@ -368,11 +421,11 @@ export default function AuthModal({ isOpen, onClose, onAuthSuccess, initialRole 
                 ) : (
                   <button
                     type="button"
-                    onClick={handleSendEmailOTP}
-                    disabled={isSendingEmailOTP || !email}
-                    className="text-[11px] font-bold text-indigo-300 hover:text-indigo-200 bg-indigo-500/20 hover:bg-indigo-500/30 px-2.5 py-0.5 rounded-full border border-indigo-500/40 transition-colors"
+                    onClick={requestEmailOTP}
+                    disabled={isSendingOtp || !email}
+                    className="text-[11px] font-bold text-indigo-300 hover:text-indigo-200 bg-indigo-500/20 hover:bg-indigo-500/30 px-2.5 py-0.5 rounded-full border border-indigo-500/40 transition-colors cursor-pointer"
                   >
-                    {isSendingEmailOTP ? 'Sending OTP...' : 'Verify Email (OTP)'}
+                    {isSendingOtp ? 'Sending OTP...' : 'Send Verification OTP'}
                   </button>
                 )
               )}
@@ -389,35 +442,12 @@ export default function AuthModal({ isOpen, onClose, onAuthSuccess, initialRole 
                 if (isEmailVerified) setIsEmailVerified(false);
               }}
             />
-
-            {/* Email OTP Verification Input */}
-            {isRegister && showEmailOTPInput && !isEmailVerified && (
-              <div className="mt-1 p-2.5 rounded-lg bg-black/50 border border-indigo-500/30 flex items-center gap-2 animate-in fade-in">
-                <KeyRound size={15} className="text-indigo-400 flex-shrink-0" />
-                <input
-                  type="text"
-                  maxLength={6}
-                  placeholder="Enter 6-Digit Email OTP (e.g. 123456)"
-                  className="input-field text-xs py-1.5 font-mono"
-                  value={emailOTP}
-                  onChange={(e) => setEmailOTP(e.target.value)}
-                />
-                <button
-                  type="button"
-                  onClick={handleVerifyEmailOTP}
-                  disabled={isVerifyingEmailOTP || !emailOTP}
-                  className="btn btn-primary btn-sm text-xs py-1.5 px-3 font-bold flex-shrink-0"
-                >
-                  {isVerifyingEmailOTP ? 'Verifying...' : 'Confirm'}
-                </button>
-              </div>
-            )}
           </div>
 
           {/* PASSWORD INPUT */}
           <div>
             <label className="text-xs text-slate-300 block mb-1 font-semibold flex items-center gap-1">
-              <Lock size={13} /> Password
+              <Lock size={13} /> Password <span className="text-rose-400">*</span>
             </label>
             <input
               type="password"
@@ -429,65 +459,20 @@ export default function AuthModal({ isOpen, onClose, onAuthSuccess, initialRole 
             />
           </div>
 
-          {/* MOBILE NUMBER INPUT WITH OTP VERIFICATION SYSTEM */}
+          {/* MOBILE NUMBER & LOCALITY */}
           {isRegister && (
             <>
-              <div className="border border-white/10 p-3 rounded-xl bg-white/5 flex flex-col gap-2">
-                <div className="flex items-center justify-between">
-                  <label className="text-xs text-slate-300 font-semibold flex items-center gap-1">
-                    <Phone size={13} className="text-emerald-400" /> Mobile Number <span className="text-rose-400">*</span>
-                  </label>
-                  
-                  {isPhoneVerified ? (
-                    <span className="text-[11px] font-bold text-emerald-400 bg-emerald-500/20 px-2 py-0.5 rounded-full border border-emerald-500/30 flex items-center gap-1">
-                      <Check size={11} /> Mobile Verified
-                    </span>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={handleSendPhoneOTP}
-                      disabled={isSendingPhoneOTP || !phone}
-                      className="text-[11px] font-bold text-emerald-300 hover:text-emerald-200 bg-emerald-500/20 hover:bg-emerald-500/30 px-2.5 py-0.5 rounded-full border border-emerald-500/40 transition-colors"
-                    >
-                      {isSendingPhoneOTP ? 'Sending OTP...' : 'Verify Mobile (OTP)'}
-                    </button>
-                  )}
-                </div>
-
+              <div>
+                <label className="text-xs text-slate-300 block mb-1 font-semibold flex items-center gap-1">
+                  <Phone size={13} className="text-emerald-400" /> Mobile Number
+                </label>
                 <input
                   type="text"
-                  required
                   className="input-field text-sm"
                   placeholder="+91 98765-43210"
                   value={phone}
-                  onChange={(e) => {
-                    setPhone(e.target.value);
-                    if (isPhoneVerified) setIsPhoneVerified(false);
-                  }}
+                  onChange={(e) => setPhone(e.target.value)}
                 />
-
-                {/* Mobile OTP Verification Input */}
-                {showPhoneOTPInput && !isPhoneVerified && (
-                  <div className="mt-1 p-2.5 rounded-lg bg-black/50 border border-emerald-500/30 flex items-center gap-2 animate-in fade-in">
-                    <KeyRound size={15} className="text-emerald-400 flex-shrink-0" />
-                    <input
-                      type="text"
-                      maxLength={6}
-                      placeholder="Enter 6-Digit Mobile OTP (e.g. 123456)"
-                      className="input-field text-xs py-1.5 font-mono"
-                      value={phoneOTP}
-                      onChange={(e) => setPhoneOTP(e.target.value)}
-                    />
-                    <button
-                      type="button"
-                      onClick={handleVerifyPhoneOTP}
-                      disabled={isVerifyingPhoneOTP || !phoneOTP}
-                      className="btn btn-primary btn-sm text-xs py-1.5 px-3 font-bold flex-shrink-0"
-                    >
-                      {isVerifyingPhoneOTP ? 'Verifying...' : 'Confirm'}
-                    </button>
-                  </div>
-                )}
               </div>
 
               {/* Kanpur City Address Selection */}
@@ -527,23 +512,23 @@ export default function AuthModal({ isOpen, onClose, onAuthSuccess, initialRole 
 
           <button
             type="submit"
-            disabled={loading}
+            disabled={loading || isSendingOtp}
             className="btn btn-primary w-full mt-2 font-bold flex items-center justify-center gap-2 cursor-pointer shadow-lg shadow-emerald-500/25"
           >
-            {loading ? 'Authenticating...' : isRegister ? `Register as ${role.toUpperCase()}` : `Login as ${role.toUpperCase()}`}
+            {loading ? 'Authenticating...' : isSendingOtp ? 'Sending OTP to Email...' : isRegister ? `Verify OTP & Register (${role.toUpperCase()})` : `Login as ${role.toUpperCase()}`}
             <ArrowRight size={16} />
           </button>
         </form>
 
         {/* Switch Login / Register */}
-        <div className="text-center mt-4 text-xs text-slate-400 border-t border-white/10 pt-3">
+        <div className="text-center mt-4 text-xs text-slate-400 border-t border-white/10 pt-3 flex flex-col gap-2">
           {isRegister ? (
             <span>
               Already registered?{' '}
               <button
                 type="button"
                 onClick={() => { setIsRegister(false); handleSelectRoleOption(role); }}
-                className="text-emerald-400 font-bold hover:underline ml-1"
+                className="text-emerald-400 font-bold hover:underline ml-1 cursor-pointer"
               >
                 Sign In to Existing Account
               </button>
@@ -554,15 +539,133 @@ export default function AuthModal({ isOpen, onClose, onAuthSuccess, initialRole 
               <button
                 type="button"
                 onClick={() => { setIsRegister(true); setEmail(''); setPassword(''); }}
-                className="text-emerald-400 font-bold hover:underline ml-1"
+                className="text-emerald-400 font-bold hover:underline ml-1 cursor-pointer"
               >
-                Register New Role Account
+                Register New Role Account (with Email OTP)
               </button>
             </span>
+          )}
+
+          {/* Quick SMTP Test Button */}
+          <div className="pt-2 border-t border-white/5 flex items-center justify-center gap-2 text-[11px] text-slate-400">
+            <span>Gmail SMTP Test:</span>
+            <button
+              type="button"
+              onClick={handleTriggerTestEmail}
+              disabled={isTestingMail}
+              className="text-indigo-400 hover:text-indigo-300 font-semibold underline cursor-pointer"
+            >
+              {isTestingMail ? 'Sending test mail...' : 'Send Test Mail to nitinkumar.passionne@gmail.com'}
+            </button>
+          </div>
+          {testMailStatus && (
+            <div className="text-[11px] text-emerald-400 font-medium">{testMailStatus}</div>
           )}
         </div>
 
       </div>
+
+      {/* DEDICATED POPUP OTP VERIFICATION MODAL */}
+      {isOtpPopupOpen && (
+        <div className="fixed inset-0 bg-black/90 backdrop-blur-lg flex items-center justify-center z-[60] p-4 animate-in fade-in duration-200">
+          <div className="glass-panel bg-[#0b101d] max-w-md w-full p-6 md:p-8 border-emerald-500/50 shadow-2xl relative rounded-2xl">
+            
+            <button
+              onClick={() => setIsOtpPopupOpen(false)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-white p-1 rounded-lg cursor-pointer"
+            >
+              <X size={20} />
+            </button>
+
+            <div className="text-center mb-6">
+              <div className="inline-flex p-3 bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 rounded-2xl mb-3 shadow-lg shadow-emerald-500/20">
+                <KeyRound size={28} />
+              </div>
+              <h3 className="text-xl font-black text-white">Enter Verification Code</h3>
+              <p className="text-xs text-slate-300 mt-1.5">
+                We sent a 6-digit OTP code to:
+              </p>
+              <div className="inline-block mt-1 px-3 py-1 bg-white/5 border border-white/10 rounded-full text-xs font-bold text-emerald-400">
+                {email}
+              </div>
+            </div>
+
+            {otpError && (
+              <div className="p-3 mb-4 rounded-xl bg-rose-500/20 border border-rose-500/40 text-rose-300 text-xs text-center font-semibold flex items-center justify-center gap-2">
+                <AlertTriangle size={15} />
+                <span>{otpError}</span>
+              </div>
+            )}
+
+            {/* 6-DIGIT OTP INPUT BOXES */}
+            <div className="flex justify-center gap-2.5 mb-6" onPaste={handlePaste}>
+              {otpDigits.map((digit, idx) => (
+                <input
+                  key={idx}
+                  ref={otpInputRefs[idx]}
+                  type="text"
+                  inputMode="numeric"
+                  maxLength={1}
+                  value={digit}
+                  onChange={(e) => handleDigitChange(idx, e.target.value)}
+                  onKeyDown={(e) => handleKeyDown(idx, e)}
+                  className={`w-11 h-13 md:w-12 md:h-14 text-center text-xl font-bold font-mono rounded-xl border bg-black/60 text-emerald-400 transition-all focus:outline-none focus:scale-105 ${
+                    digit 
+                      ? 'border-emerald-500 bg-emerald-500/10 shadow-md shadow-emerald-500/20' 
+                      : 'border-white/20 focus:border-emerald-400'
+                  }`}
+                />
+              ))}
+            </div>
+
+            {/* ACTION BUTTON */}
+            <button
+              onClick={handleVerifyOtpAndRegister}
+              disabled={isVerifyingOtp || otpDigits.join('').length < 6}
+              className="btn btn-primary w-full py-3 font-bold text-sm flex items-center justify-center gap-2 cursor-pointer shadow-lg shadow-emerald-500/30"
+            >
+              {isVerifyingOtp ? (
+                <>
+                  <RefreshCw size={16} className="animate-spin" /> Verifying OTP...
+                </>
+              ) : (
+                <>
+                  <CheckCircle2 size={16} /> Verify & Complete Registration
+                </>
+              )}
+            </button>
+
+            {/* RESEND OTP & COUNTDOWN */}
+            <div className="mt-4 text-center text-xs text-slate-400 flex items-center justify-center gap-2">
+              {countdown > 0 ? (
+                <span>Resend code in <strong className="text-emerald-400 font-mono">{countdown}s</strong></span>
+              ) : (
+                <button
+                  type="button"
+                  onClick={requestEmailOTP}
+                  disabled={isSendingOtp}
+                  className="text-emerald-400 hover:text-emerald-300 font-bold underline flex items-center gap-1 cursor-pointer"
+                >
+                  <RefreshCw size={13} className={isSendingOtp ? 'animate-spin' : ''} />
+                  Resend OTP to Email
+                </button>
+              )}
+            </div>
+
+            <div className="mt-3 text-center">
+              <button
+                type="button"
+                onClick={() => setIsOtpPopupOpen(false)}
+                className="text-[11px] text-slate-500 hover:text-slate-300 underline cursor-pointer"
+              >
+                Change email address
+              </button>
+            </div>
+
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }

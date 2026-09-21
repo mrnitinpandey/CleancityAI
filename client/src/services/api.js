@@ -41,6 +41,15 @@ export async function verifyOTPAPI(target, otp) {
   return res.json();
 }
 
+export async function sendTestMailAPI(email) {
+  const res = await fetch(`${API_BASE_URL}/api/auth/test-email`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email })
+  });
+  return res.json();
+}
+
 export async function fetchComplaints() {
   const res = await fetch(`${API_BASE_URL}/api/complaints`);
   const data = await res.json();

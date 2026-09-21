@@ -1,5 +1,6 @@
 import { Complaint } from '../models/Complaint.js';
 import mongoose from 'mongoose';
+import { sendOTPEmail, sendLoginAlertEmail, generateOTP, otpStore } from '../services/emailService.js';
 
 // Kanpur City Seed Locations & Wards
 export const KANPUR_WARDS = [
@@ -133,6 +134,100 @@ export const calculatePriorityScore = ({ severity, category }) => {
   return Math.min(99, Math.max(25, score));
 };
 
+// --- OTP & EMAIL AUTH CONTROLLERS ---
+export const sendOTP = async (req, res) => {
+  try {
+    const { target, type = 'email', purpose = 'Account Registration' } = req.body;
+    if (!target) {
+      return res.status(400).json({ success: false, message: 'Target email or mobile number is required' });
+    }
+
+    const cleanTarget = target.toString().toLowerCase().trim();
+    const otp = generateOTP();
+    const expiresAt = Date.now() + 10 * 60 * 1000; // 10 minutes
+
+    otpStore.set(cleanTarget, {
+      otp,
+      expiresAt,
+      verified: false,
+      type
+    });
+
+    if (type === 'email' || cleanTarget.includes('@')) {
+      try {
+        await sendOTPEmail(cleanTarget, otp, purpose);
+        console.log(`[CleanCity Email] Sent OTP ${otp} to ${cleanTarget}`);
+        return res.json({
+          success: true,
+          message: `Verification OTP sent to ${cleanTarget}`,
+          expiresInSeconds: 600
+        });
+      } catch (mailErr) {
+        console.error('[CleanCity Email Error]', mailErr);
+        // Fallback for offline/network hiccups while maintaining UX
+        return res.json({
+          success: true,
+          message: `OTP generated for ${cleanTarget} (Email relay warning: ${mailErr.message})`,
+          otp, // Dev fallback
+          expiresInSeconds: 600
+        });
+      }
+    } else {
+      console.log(`[CleanCity Mobile OTP] Simulated SMS to ${cleanTarget} with code ${otp}`);
+      return res.json({
+        success: true,
+        message: `OTP sent to mobile ${cleanTarget}`,
+        otp,
+        expiresInSeconds: 600
+      });
+    }
+  } catch (err) {
+    console.error('[sendOTP Exception]', err);
+    return res.status(500).json({ success: false, message: 'Failed to dispatch OTP: ' + err.message });
+  }
+};
+
+export const verifyOTP = (req, res) => {
+  const { target, otp } = req.body;
+  if (!target || !otp) {
+    return res.status(400).json({ success: false, message: 'Target and 6-digit OTP code are required' });
+  }
+
+  const cleanTarget = target.toString().toLowerCase().trim();
+  const record = otpStore.get(cleanTarget);
+
+  if (!record) {
+    return res.status(400).json({ success: false, message: 'No OTP requested for this account or it has expired. Please request a new OTP.' });
+  }
+
+  if (Date.now() > record.expiresAt) {
+    otpStore.delete(cleanTarget);
+    return res.status(400).json({ success: false, message: 'OTP has expired. Please click resend to get a fresh code.' });
+  }
+
+  if (record.otp !== otp.toString().trim()) {
+    return res.status(400).json({ success: false, message: 'Incorrect OTP code entered. Please try again.' });
+  }
+
+  record.verified = true;
+  return res.json({ success: true, message: 'OTP verified successfully' });
+};
+
+export const sendTestMail = async (req, res) => {
+  try {
+    const targetEmail = req.body?.email || 'nitinkumar.passionne@gmail.com';
+    const info = await sendOTPEmail(targetEmail, '924185', 'CleanCity AI SMTP Live Verification');
+    return res.json({
+      success: true,
+      message: `Test email sent successfully to ${targetEmail}`,
+      messageId: info.messageId
+    });
+  } catch (err) {
+    console.error('[sendTestMail Error]', err);
+    return res.status(500).json({ success: false, message: 'Failed to send test email: ' + err.message });
+  }
+};
+
 // --- AUTH CONTROLLERS ---
 export const loginUser = (req, res) => {
   const { email, password, role } = req.body;
@@ -151,6 +246,18 @@ export const loginUser = (req, res) => {
 
   // Update last login timestamp
   user.lastLogin = new Date().toISOString();
+
+  // Asynchronously send Login Notification Email to user's registered email
+  sendLoginAlertEmail(user.email, {
+    userName: user.name,
+    role: user.role,
+    timestamp: user.lastLogin,
+    ip: req.ip || req.headers['x-forwarded-for'] || 'Localhost'
+  }).then(info => {
+    console.log(`[CleanCity Login Alert] Sent security notification to ${user.email} (MessageID: ${info?.messageId})`);
+  }).catch(err => {
+    console.warn(`[CleanCity Login Alert] Notice email skipped for ${user.email}:`, err.message);
+  });
 
   return res.json({
     success: true,
@@ -215,6 +322,14 @@ export const registerUser = (req, res) => {
       avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=150&q=80'
     });
   }
+
+  // Also send a welcome/login alert for newly registered user
+  sendLoginAlertEmail(newUser.email, {
+    userName: newUser.name,
+    role: newUser.role,
+    timestamp: newUser.registeredAt,
+    ip: req.ip || req.headers['x-forwarded-for'] || 'Localhost'
+  }).catch(err => console.warn('[Welcome Alert Error]', err.message));
 
   return res.status(201).json({
     success: true,

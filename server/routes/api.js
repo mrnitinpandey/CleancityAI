@@ -10,6 +10,9 @@ import {
   deleteWorker,
   loginUser,
   registerUser,
+  sendOTP,
+  verifyOTP,
+  sendTestMail,
   exportAdminData,
   getKanpurWards,
   getAllUsers
@@ -25,9 +28,13 @@ router.get('/health', (req, res) => {
     timestamp: new Date().toISOString()
   });
 });
-// Auth routes
+
+// Auth & OTP routes
 router.post('/auth/login', loginUser);
 router.post('/auth/register', registerUser);
+router.post('/auth/send-otp', sendOTP);
+router.post('/auth/verify-otp', verifyOTP);
+router.post('/auth/test-email', sendTestMail);
 
 // Complaints routes
 router.get('/complaints', getComplaints);
